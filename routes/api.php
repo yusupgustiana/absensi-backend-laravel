@@ -32,6 +32,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\Absensiv2Controller;
 use App\Http\Controllers\Api\KasbonControllerApi;
 use App\Http\Controllers\Api\AuthApiController;
+use App\Http\Controllers\Api\ProfileControllerApi;
 
 /*
 |--------------------------------------------------------------------------
@@ -56,9 +57,19 @@ Route::prefix('absensi')->group(function () {
 });
 
 // Prefix KASBON
-Route::prefix('kasbon')->middleware(['auth:sanctum'])->group(function () {
+Route::prefix('kasbon')->group(function () {
     Route::post('pengajuan', [KasbonControllerApi::class, 'pengajuan']);
-    Route::post('history', [KasbonControllerApi::class, 'history']);
+    Route::get('history', [KasbonControllerApi::class, 'history']);
     Route::post('uploadBuktiTransfer', [KasbonControllerApi::class, 'uploadBuktiTransfer']);
-    Route::post('allHistory', [KasbonControllerApi::class, 'allHistory']);
+    Route::get('allHistory', [KasbonControllerApi::class, 'allHistory']);
+    Route::post('tolak', [KasbonControllerApi::class, 'tolak']);
+    Route::post('setujui', [KasbonControllerApi::class, 'setujui']);
+    Route::post('lunas', [KasbonControllerApi::class, 'lunas']);
+});
+
+Route::prefix('profile')->group(function () {
+Route::get('/getProfile', [ProfileControllerApi::class, 'profile']);
+Route::post('/updateProfile', [ProfileControllerApi::class, 'updateProfile']);
+Route::post('/change-password', [ProfileControllerApi::class, 'changePassword']);
+Route::post('/update-email', [ProfileControllerApi::class, 'updateEmail']);
 });

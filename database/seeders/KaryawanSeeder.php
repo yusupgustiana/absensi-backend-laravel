@@ -11,12 +11,12 @@ class KaryawanSeeder extends Seeder
     public function run(): void
     {
         Karyawan::create([
-            'id_karyawan' => 1,
-            'nama' => 'Administrator',
-            'email' => 'admin@example.com',
-            'username' => 'admin',
+            'id_karyawan' => 2,
+            'nama' => 'Yusup Gustiana',
+            'email' => 'yusup@example.com',
+            'username' => 'yusup',
             'image' => 'default.png',
-            'password' => Hash::make('admin123'),
+            'password' => Hash::make('yusup123'),
             'role_id' => 1,
             'is_active' => 1,
             'jenisakun' => 1,

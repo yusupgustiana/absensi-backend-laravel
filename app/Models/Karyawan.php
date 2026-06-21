@@ -23,10 +23,27 @@ class Karyawan extends Authenticatable
         'role_id',
         'password',
         'image',
-        'is_active'
+        'is_active',
+        'jenisakun',
+        'akses_kasbon',
+        'approved_absen',
     ];
 
     protected $hidden = [
         'password',
     ];
+       protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($model) {
+            if ($model->jenisakun == 1) {
+                $model->akses_kasbon   = true;
+                $model->approved_absen = true;
+            } else {
+                $model->akses_kasbon   = false;
+                $model->approved_absen = false;
+            }
+        });
+    }
 }

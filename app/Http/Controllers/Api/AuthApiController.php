@@ -53,7 +53,11 @@ class AuthApiController extends Controller
                 'nama'        => $user->nama,
                 'role_id'     => (string) $user->role_id,
                 'image'       => url('assets/img/profile/' . $user->image),
-            ]
+            ],
+            'actions'        => [
+                        'akses_kasbon'   => (bool) $user->akses_kasbon,
+                        'approved_absen' => (bool) $user->approved_absen,
+                                    ]
         ]);
     }
 }

@@ -5,16 +5,17 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\Absensi;
+use Illuminate\Support\Facades\Validator;
+use Symfony\Component\HttpFoundation\Response;
 
 class Absensiv2Controller extends Controller
 {
 
-public function kirimAbsen(Request $request)
-    {
-        date_default_timezone_set('Asia/Jakarta');
 
-        // 1. Validasi input
-        $validated = $request->validate([
+public function kirimAbsen(Request $request)
+{
+    try {
+        $validator = Validator::make($request->all(), [
             'id_user'   => 'required|integer',
             'latitude'  => 'required|numeric',
             'longitude' => 'required|numeric',
@@ -22,51 +23,121 @@ public function kirimAbsen(Request $request)
             'image'     => 'required|string',
         ]);
 
-        $id_user   = $validated['id_user'];
-        $latitude  = $validated['latitude'];
-        $longitude = $validated['longitude'];
-        $status    = strtolower(trim($validated['status'] ?? ''));
-        $image64   = $validated['image'];
-        $now       = now()->format('Y-m-d H:i:s');
-
-        // 2. Simpan foto
-        $fileName = $this->simpanFoto($image64);
-        if (!$fileName) {
-            return response()->json(['status' => false, 'message' => 'Gagal menyimpan file foto'], 500);
+        if ($validator->fails()) {
+            return response()->json([
+                'status'     => false,
+                'message'    => $validator->errors()->first(),
+                'statusCode' => (string) Response::HTTP_UNPROCESSABLE_ENTITY,
+                'data'       => null,
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        // 3. Cari SPK terdekat
-        $nearest_spk_id = $this->cariSpkTerdekat($latitude, $longitude);
+        $idUser    = $request->integer('id_user');
+        $latitude  = $request->latitude;
+        $longitude = $request->longitude;
+        $status    = strtolower(trim($request->input('status', 'otomatis')));
+        $image64   = $request->image;
+        $now       = now()->format('Y-m-d H:i:s');
 
-        // 4. Ambil absensi terakhir
+        // Simpan foto
+        $fileName = $this->simpanFoto($image64);
+
+        if (!$fileName) {
+            return response()->json([
+                'status'     => false,
+                'message'    => 'Gagal menyimpan file foto',
+                'statusCode' => (string) Response::HTTP_INTERNAL_SERVER_ERROR,
+                'data'       => null,
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+
+        // Cari SPK terdekat
+        $nearestSpkId = $this->cariSpkTerdekat($latitude, $longitude);
+
+        // Ambil absensi terakhir
         $lastAbsen = DB::table('absensi')
-            ->where('id_user', $id_user)
+            ->where('id_user', $idUser)
             ->where('deleted', 0)
-            ->orderByDesc('id')
+            ->latest('id')
             ->first();
 
-        // 5. Logika otomatis
-        if ($status === '' || $status === 'otomatis') {
+        // Mode otomatis
+        if ($status === 'otomatis') {
+
             if (!$lastAbsen || ($lastAbsen->checkin_time && $lastAbsen->checkout_time)) {
-                return $this->insertCheckin($id_user, $nearest_spk_id, $latitude, $longitude, $fileName, $now, 'Check-in otomatis berhasil.');
+                return $this->insertCheckin(
+                    $idUser,
+                    $nearestSpkId,
+                    $latitude,
+                    $longitude,
+                    $fileName,
+                    $now,
+                    'Check-in otomatis berhasil.'
+                );
             }
 
             if ($lastAbsen->checkin_time && !$lastAbsen->checkout_time) {
-                return $this->updateCheckout($lastAbsen->id, $id_user, $latitude, $longitude, $fileName, $now, 'Check-out otomatis berhasil.');
+                return $this->updateCheckout(
+                    $lastAbsen->id,
+                    $idUser,
+                    $latitude,
+                    $longitude,
+                    $fileName,
+                    $now,
+                    'Check-out otomatis berhasil.'
+                );
             }
         }
 
-        // 6. Logika manual
+        // Check-in manual
         if ($status === 'checkin') {
-            return $this->insertCheckin($id_user, $nearest_spk_id, $latitude, $longitude, $fileName, $now, 'Check-in manual berhasil.');
+            return $this->insertCheckin(
+                $idUser,
+                $nearestSpkId,
+                $latitude,
+                $longitude,
+                $fileName,
+                $now,
+                'Check-in manual berhasil.'
+            );
         }
 
+        // Check-out manual
         if ($status === 'checkout') {
-            return $this->insertCheckoutManual($id_user, $nearest_spk_id, $latitude, $longitude, $fileName, $now, 'Check-out manual berhasil.');
+            return $this->insertCheckoutManual(
+                $idUser,
+                $nearestSpkId,
+                $latitude,
+                $longitude,
+                $fileName,
+                $now,
+                'Check-out manual berhasil.'
+            );
         }
 
-        return response()->json(['status' => false, 'message' => 'Status tidak dikenali'], 422);
+        return response()->json([
+            'status'     => false,
+            'message'    => 'Status tidak dikenali',
+            'statusCode' => (string) Response::HTTP_UNPROCESSABLE_ENTITY,
+            'data'       => null,
+        ], Response::HTTP_UNPROCESSABLE_ENTITY);
+
+    } catch (\Throwable $e) {
+
+        \Log::error('Kirim Absen Error', [
+            'message' => $e->getMessage(),
+            'line'    => $e->getLine(),
+            'file'    => $e->getFile(),
+        ]);
+
+        return response()->json([
+            'status'     => false,
+            'message'    => 'Terjadi kesalahan pada server',
+            'statusCode' => (string) Response::HTTP_INTERNAL_SERVER_ERROR,
+            'data'       => null,
+        ], Response::HTTP_INTERNAL_SERVER_ERROR);
     }
+}
 
     
     // ─── Helper ────────────────────────────────────────────────
@@ -95,52 +166,109 @@ private function simpanFoto(string $image64): ?string
         return null;
     }
 
-    private function insertCheckin($id_user, $spk_id, $lat, $lng, $foto, $now, $msg)
-    {
-        DB::table('absensi')->insert([
-            'id_user'           => $id_user,
-            'id_headerspk'      => $spk_id,
-            'tanggal'           => date('Y-m-d'),
-            'checkin_time'      => $now,
-            'checkin_latitude'  => $lat,
-            'checkin_longitude' => $lng,
-            'checkin_foto'      => $foto,
-            'create_by'         => $id_user,
-            'create_date'       => $now,
-            'deleted'           => 0,
-        ]);
-        return response()->json(['status' => true, 'message' => $msg]);
-    }
+private function insertCheckin(
+    int $idUser,
+    ?int $spkId,
+    float $lat,
+    float $lng,
+    string $foto,
+    string $now,
+    string $message
+) {
+    $idAbsensi = DB::table('absensi')->insertGetId([
+        'id_user'           => $idUser,
+        'id_headerspk'      => $spkId,
+        'tanggal'           => now()->toDateString(),
+        'checkin_time'      => $now,
+        'checkin_latitude'  => $lat,
+        'checkin_longitude' => $lng,
+        'checkin_foto'      => $foto,
+        'create_by'         => $idUser,
+        'create_date'       => $now,
+        'deleted'           => 0,
+    ]);
 
-    private function updateCheckout($absen_id, $id_user, $lat, $lng, $foto, $now, $msg)
-    {
-        DB::table('absensi')->where('id', $absen_id)->update([
+    return response()->json([
+        'status'     => true,
+        'message'    => $message,
+        'statusCode' => (string) Response::HTTP_CREATED,
+        'data'       => [
+            'id_absensi' => $idAbsensi,
+        ],
+    ], Response::HTTP_CREATED);
+}
+
+
+private function updateCheckout(
+    int $absenId,
+    int $idUser,
+    float $lat,
+    float $lng,
+    string $foto,
+    string $now,
+    string $message
+) {
+    $updated = DB::table('absensi')
+        ->where('id', $absenId)
+        ->update([
             'checkout_time'      => $now,
             'checkout_latitude'  => $lat,
             'checkout_longitude' => $lng,
             'checkout_foto'      => $foto,
-            'update_by'          => $id_user,
+            'update_by'          => $idUser,
             'update_date'        => $now,
         ]);
-        return response()->json(['status' => true, 'message' => $msg]);
+
+    if (!$updated) {
+        return response()->json([
+            'status'     => false,
+            'message'    => 'Data absensi tidak ditemukan atau tidak ada perubahan.',
+            'statusCode' => (string) Response::HTTP_NOT_FOUND,
+            'data'       => null,
+        ], Response::HTTP_NOT_FOUND);
     }
 
-    private function insertCheckoutManual($id_user, $spk_id, $lat, $lng, $foto, $now, $msg)
-    {
-        DB::table('absensi')->insert([
-            'id_user'            => $id_user,
-            'id_headerspk'       => $spk_id,
-            'tanggal'            => date('Y-m-d'),
-            'checkout_time'      => $now,
-            'checkout_latitude'  => $lat,
-            'checkout_longitude' => $lng,
-            'checkout_foto'      => $foto,
-            'create_by'          => $id_user,
-            'create_date'        => $now,
-            'deleted'            => 0,
-        ]);
-        return response()->json(['status' => true, 'message' => $msg]);
-    }
+    return response()->json([
+        'status'     => true,
+        'message'    => $message,
+        'statusCode' => (string) Response::HTTP_OK,
+        'data'       => [
+            'id_absensi' => $absenId,
+        ],
+    ], Response::HTTP_OK);
+}
+
+private function insertCheckoutManual(
+    int $idUser,
+    ?int $spkId,
+    float $lat,
+    float $lng,
+    string $foto,
+    string $now,
+    string $message
+) {
+    $idAbsensi = DB::table('absensi')->insertGetId([
+        'id_user'            => $idUser,
+        'id_headerspk'       => $spkId,
+        'tanggal'            => now()->toDateString(),
+        'checkout_time'      => $now,
+        'checkout_latitude'  => $lat,
+        'checkout_longitude' => $lng,
+        'checkout_foto'      => $foto,
+        'create_by'          => $idUser,
+        'create_date'        => $now,
+        'deleted'            => 0,
+    ]);
+
+    return response()->json([
+        'status'     => true,
+        'message'    => $message,
+        'statusCode' => (string) Response::HTTP_CREATED,
+        'data'       => [
+            'id_absensi' => $idAbsensi,
+        ],
+    ], Response::HTTP_CREATED);
+}
 
     private function haversineDistance($lat1, $lon1, $lat2, $lon2)
     {
@@ -154,112 +282,147 @@ private function simpanFoto(string $image64): ?string
         return $earthRadius * $c;
     }
 
- public function absensiTerakhir(Request $request)
-    {
-        // Validasi input
-        $validated = $request->validate([
-            'iduser' => 'required|integer',
-        ]);
+public function absensiTerakhir(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'iduser' => 'required|integer',
+    ]);
 
-        $iduser = $validated['iduser'];
+    if ($validator->fails()) {
+        return response()->json([
+            'status' => false,
+            'message' => $validator->errors()->first(),
+            'statusCode' => '422',
+            'data' => null,
+        ], 422);
+    }
 
-        // Ambil absensi terakhir user
-        $last = DB::table('absensi')
-            ->where('id_user', $iduser)
-            ->where('deleted', 0)
-            ->orderByDesc('id')
-            ->first();
+    $iduser = $request->iduser;
 
-        if ($last) {
-            $jenisabsensi = is_null($last->checkout_time) ? 'Checkin' : 'Checkout';
+    $last = DB::table('absensi')
+        ->where('id_user', $iduser)
+        ->where('deleted', 0)
+        ->orderByDesc('id')
+        ->first();
 
-            return response()->json([
-                'status' => true,
-                'message' => 'Data absensi ditemukan',
-                'data' => [
-                    'jenisabsensi'  => $jenisabsensi,
-                    'tanggal'       => $last->tanggal,
-                    'checkin_time'  => $last->checkin_time,
-                    'checkout_time' => $last->checkout_time,
-                ]
-            ], 200);
-        }
-
+    if ($last) {
         return response()->json([
             'status' => true,
-            'message' => 'Belum ada data absensi',
-            'data' => null
+            'message' => 'Data absensi ditemukan',
+            'statusCode' => '200',
+            'data' => [
+                'jenisabsensi'  => is_null($last->checkout_time) ? 'Checkin' : 'Checkout',
+                'tanggal'       => $last->tanggal,
+                'checkin_time'  => $last->checkin_time,
+                'checkout_time' => $last->checkout_time,
+            ]
         ], 200);
     }
 
+    return response()->json([
+        'status' => true,
+        'message' => 'Belum ada data absensi',
+        'statusCode' => '200',
+        'data' => null,
+    ], 200);
+}
+
+
+    
+ 
 public function historyAbsensi(Request $request)
 {
-    $idUser = $request->input('id_user');
+    try {
 
-    if (!$idUser) {
-        return response()->json([
-            'status'  => false,
-            'message' => 'Parameter id_user tidak boleh kosong.'
-        ], 400);
-    }
+        $validator = Validator::make($request->all(), [
+            'id_user'       => 'required|integer',
+            'tanggaldari'   => 'nullable|date',
+            'tanggalsampai' => 'nullable|date',
+        ]);
 
-    $query = DB::table('absensi as a')
-        ->leftJoin('karyawan as u', 'u.id_user', '=', 'a.id_user')
-        ->select([
-            'a.id_user',
-            'u.nama',
-            'a.tanggal',
-            DB::raw('MIN(a.checkin_time) as checkin_time'),
-            DB::raw('MAX(a.checkout_time) as checkout_time'),
-            DB::raw('MAX(a.checkin_approved) as checkin_approved'),
-            DB::raw('MAX(a.checkout_approved) as checkout_approved'),
-            DB::raw("GROUP_CONCAT(DISTINCT a.checkin_deskripsi ORDER BY a.checkin_time SEPARATOR ' | ') as checkin_deskripsi"),
-            DB::raw("GROUP_CONCAT(DISTINCT a.checkout_deskripsi ORDER BY a.checkout_time SEPARATOR ' | ') as checkout_deskripsi"),
-        ])
-        ->where('a.deleted', 0);
+        if ($validator->fails()) {
+            return response()->json([
+                'status'     => false,
+                'message'    => $validator->errors()->first(),
+                'statusCode' => (string) Response::HTTP_UNPROCESSABLE_ENTITY,
+                'data'       => null,
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
-    // Admin (id_user = 1) dapat melihat semua data
-    if ((int) $idUser !== 1) {
-        $query->where('a.id_user', $idUser);
-    }
+        $idUser        = $request->integer('id_user');
+        $tanggalDari   = $request->input('tanggaldari');
+        $tanggalSampai = $request->input('tanggalsampai');
 
-    // Filter tanggal
-    $tanggalDari   = $request->input('tanggaldari');
-    $tanggalSampai = $request->input('tanggalsampai');
+        $query = DB::table('absensi as a')
+            ->leftJoin('karyawan as u', 'u.id_user', '=', 'a.id_user')
+            ->select([
+                'a.id_user',
+                'u.nama',
+                'a.tanggal',
+                DB::raw('MIN(a.checkin_time) as checkin_time'),
+                DB::raw('MAX(a.checkout_time) as checkout_time'),
+                DB::raw('MAX(a.checkin_approved) as checkin_approved'),
+                DB::raw('MAX(a.checkout_approved) as checkout_approved'),
+                DB::raw("GROUP_CONCAT(DISTINCT a.checkin_deskripsi ORDER BY a.checkin_time SEPARATOR ' | ') as checkin_deskripsi"),
+                DB::raw("GROUP_CONCAT(DISTINCT a.checkout_deskripsi ORDER BY a.checkout_time SEPARATOR ' | ') as checkout_deskripsi"),
+            ])
+            ->where('a.deleted', 0);
 
-    $query->when(
-        $tanggalDari && $tanggalSampai,
-        function ($q) use ($tanggalDari, $tanggalSampai) {
-            $q->whereBetween('a.tanggal', [
+        // Admin dapat melihat semua data
+        if ($idUser !== 1) {
+            $query->where('a.id_user', $idUser);
+        }
+
+        // Filter tanggal
+        if ($tanggalDari && $tanggalSampai) {
+
+            $query->whereBetween('a.tanggal', [
                 Carbon::parse($tanggalDari)->format('Y-m-d'),
                 Carbon::parse($tanggalSampai)->format('Y-m-d'),
             ]);
-        },
-        function ($q) {
-            $q->where(
+
+        } else {
+
+            $query->where(
                 'a.tanggal',
                 '>=',
                 Carbon::now()->subDays(14)->format('Y-m-d')
             );
         }
-    );
 
-    $result = $query
-        ->groupBy([
-            'a.id_user',
-            'u.nama',
-            'a.tanggal',
-        ])
-        ->orderByDesc('a.tanggal')
-        ->get();
+        $result = $query
+            ->groupBy([
+                'a.id_user',
+                'u.nama',
+                'a.tanggal',
+            ])
+            ->orderByDesc('a.tanggal')
+            ->get();
 
-    return response()->json([
-        'status'  => true,
-        'message' => ((int) $idUser === 1)
-            ? 'Data absensi semua user berhasil diambil.'
-            : 'Data absensi berhasil diambil.',
-        'data' => $result,
-    ]);
+        return response()->json([
+            'status'     => true,
+            'message'    => $idUser === 1
+                ? 'Data absensi semua user berhasil diambil.'
+                : 'Data absensi berhasil diambil.',
+            'statusCode' => (string) Response::HTTP_OK,
+            'data'       => $result,
+        ], Response::HTTP_OK);
+
+    } catch (\Throwable $e) {
+
+        \Log::error('History Absensi Error', [
+            'message' => $e->getMessage(),
+            'line'    => $e->getLine(),
+            'file'    => $e->getFile(),
+        ]);
+
+        return response()->json([
+            'status'     => false,
+            'message'    => 'Terjadi kesalahan pada server.',
+            'statusCode' => (string) Response::HTTP_INTERNAL_SERVER_ERROR,
+            'data'       => null,
+        ], Response::HTTP_INTERNAL_SERVER_ERROR);
+    }
 }
 
 

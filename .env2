@@ -1,8 +1,8 @@
-APP_NAME=Laravel
-APP_ENV=local
+APP_NAME=Portofolio
+APP_ENV=production
 APP_KEY=base64:1MBkIw5dhAkC+POlf6fLVREFaDSHZ5zB93F9HlAJxAc=
-APP_DEBUG=true
-APP_URL=http://localhost
+APP_DEBUG=false
+APP_URL=https://portofolio.free.je
 
 APP_LOCALE=en
 APP_FALLBACK_LOCALE=en
@@ -21,11 +21,11 @@ LOG_DEPRECATIONS_CHANNEL=null
 LOG_LEVEL=debug
 
 DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
+DB_HOST=sql312.infinityfree.com
 DB_PORT=3306
-DB_DATABASE=onlineshop-db
-DB_USERNAME=root
-DB_PASSWORD=
+DB_DATABASE=if0_42166890_db_onlineshop
+DB_USERNAME=if0_42166890
+DB_PASSWORD=rismaayu379
 
 # DB_PREFIX=tbl_
 
